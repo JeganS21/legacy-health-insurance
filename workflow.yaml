@@ -1,0 +1,63 @@
+# ------------------------------------------------------------------
+# Workflow definition: what Claude extracts and what the Excel sheet contains.
+# Edit freely - the server re-reads this file every time it is used.
+# Field types: text | number | date (YYYY-MM-DD) | boolean
+# If you change the fields, rename/delete the old Excel file so new columns are created.
+# ------------------------------------------------------------------
+sheetName: Policies
+
+instructions: >
+  You are extracting details from a health insurance document.
+  Copy values exactly as written in the document. Do not guess.
+  If a value is not present, use null. Dates must be YYYY-MM-DD.
+  Amounts must be plain numbers without currency symbols or commas.
+
+fields:
+  - name: policyHolderName
+    type: text
+    required: true
+    description: Full name of the insured person / policy holder
+  - name: policyNumber
+    type: text
+    required: true
+    description: Policy or member number
+  - name: insurer
+    type: text
+    required: true
+    description: Insurance company name
+  - name: planName
+    type: text
+    required: false
+    description: Name or type of the plan (e.g. Gold PPO, Family Floater)
+  - name: sumInsured
+    type: number
+    required: false
+    description: Total coverage amount / sum insured
+  - name: premiumAmount
+    type: number
+    required: false
+    description: Premium amount per billing period
+  - name: deductible
+    type: number
+    required: false
+    description: Deductible amount
+  - name: coPayPercent
+    type: number
+    required: false
+    description: Co-pay percentage
+  - name: startDate
+    type: date
+    required: false
+    description: Policy start date
+  - name: expiryDate
+    type: date
+    required: false
+    description: Policy end / renewal date
+  - name: keyExclusions
+    type: text
+    required: false
+    description: Short comma-separated list of main exclusions
+  - name: summary
+    type: text
+    required: true
+    description: 2-3 sentence plain-English summary of the policy

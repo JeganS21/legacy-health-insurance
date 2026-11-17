@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LegacyHealthInsurance · Pipeline</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #f5f7fa; color: #1f2933; }
+    header { background: #12355b; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { margin: 0; font-size: 19px; }
+    main { max-width: 1200px; margin: 20px auto; padding: 0 16px; display: grid; gap: 18px; }
+    section { background: #fff; border-radius: 8px; padding: 14px 16px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+    h2 { font-size: 15px; margin: 0 0 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 7px 8px; text-align: left; border-bottom: 1px solid #e4e7eb; vertical-align: top; }
+    th { background: #f0f3f7; }
+    button { padding: 7px 14px; border-radius: 6px; border: none; background: #fff; color: #12355b; font-weight: 600; cursor: pointer; }
+    .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .PENDING_EXTRACTION, .WARN, .SKIPPED, .PARTIAL { background: #fef3c7; color: #92400e; }
+    .EXTRACTED, .INFO, .SUCCESS { background: #d1fae5; color: #065f46; }
+    .FAILED, .ERROR { background: #fee2e2; color: #991b1b; }
+    .muted { color: #7b8794; font-size: 12px; }
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    pre { white-space: pre-wrap; font-size: 12px; margin: 0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const fmt = t => t ? t.replace("T", " ").substring(0, 19) : "-";
+
+    function App() {
+      const [docs, setDocs] = useState([]);
+      const [logs, setLogs] = useState([]);
+      const [runs, setRuns] = useState([]);
+      const [workflow, setWorkflow] = useState(null);
+      const [busy, setBusy] = useState(false);
+
+      const load = () => {
+        fetch("/api/documents").then(r => r.json()).then(setDocs);
+        fetch("/api/logs?limit=100").then(r => r.json()).then(setLogs);
+        fetch("/api/sync-runs?limit=10").then(r => r.json()).then(setRuns);
+      };
+
+      useEffect(() => {
+        load();
+        fetch("/api/workflow").then(r => r.json()).then(setWorkflow);
+        const timer = setInterval(load, 10000);   // auto-refresh every 10 s
+        return () => clearInterval(timer);
+      }, []);
+
+      const syncNow = () => {
+        setBusy(true);
+        fetch("/api/sync", { method: "POST" }).then(() => { setBusy(false); load(); });
+      };
+
+      return (
+        <div>
+          <header>
+            <h1>LegacyHealthInsurance · Drive → Claude (MCP) → Excel</h1>
+            <button onClick={syncNow} disabled={busy}>{busy ? "Syncing..." : "Sync Drive now"}</button>
+          </header>
+          <main>
+            <section>
+              <h2>Documents</h2>
+              <table>
+                <thead><tr><th>ID</th><th>File</th><th>Status</th><th>Excel</th><th>Fetched</th><th>Extracted fields</th></tr></thead>
+                <tbody>
+                  {docs.length === 0 && <tr><td colSpan="6" className="muted">No documents yet. Put files in the Drive folder and press "Sync Drive now".</td></tr>}
+                  {docs.map(d => (
+                    <tr key={d.documentId}>
+                      <td>{d.documentId}</td>
+                      <td>{d.fileName}<div className="muted">{d.textLength} chars</div></td>
+                      <td><span className={"badge " + d.status}>{d.status}</span>
+                          {d.errorMessage && <div className="muted">{d.errorMessage}</div>}</td>
+                      <td>{d.status === "EXTRACTED" ? (d.excelWritten ? "✅" : "⏳ retrying") : "-"}</td>
+                      <td>{fmt(d.fetchedAt)}</td>
+                      <td><pre>{d.extractedJson ? JSON.stringify(JSON.parse(d.extractedJson), null, 1) : "-"}</pre></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+
+            <div className="cols">
+              <section>
+                <h2>Sync runs (every 5 minutes)</h2>
+                <table>
+                  <thead><tr><th>Started</th><th>By</th><th>Status</th><th>Result</th></tr></thead>
+                  <tbody>
+                    {runs.map(r => (
+                      <tr key={r.id}>
+                        <td>{fmt(r.startedAt)}</td><td>{r.triggeredBy}</td>
+                        <td><span className={"badge " + r.status}>{r.status}</span></td>
+                        <td>{r.message}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+              <section>
+                <h2>Workflow fields <span className="muted">(from workflow.yaml)</span></h2>
+                {workflow && (
+                  <table>
+                    <thead><tr><th>Field</th><th>Type</th><th>Required</th></tr></thead>
+                    <tbody>
+                      {workflow.fields.map(f => (
+                        <tr key={f.name}><td>{f.name}</td><td>{f.type}</td><td>{f.required ? "yes" : ""}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </section>
+            </div>
+
+            <section>
+              <h2>Logs <span className="muted">(auto-refresh every 10 s)</span></h2>
+              <table>
+                <thead><tr><th>Time</th><th>Level</th><th>Source</th><th>Doc</th><th>Message</th></tr></thead>
+                <tbody>
+                  {logs.map(l => (
+                    <tr key={l.id}>
+                      <td>{fmt(l.timestamp)}</td>
+                      <td><span className={"badge " + l.level}>{l.level}</span></td>
+                      <td>{l.source}</td><td>{l.documentId || ""}</td><td>{l.message}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          </main>
+        </div>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
