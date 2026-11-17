@@ -52,7 +52,9 @@ Supported files: PDF (with real text, not scanned images), TXT, Google Docs.
 Dashboard: http://localhost:8081 · MCP endpoint: http://localhost:8081/mcp
 
 ### 4. Connect Claude Desktop
-Claude Desktop → **Settings → Developer → Edit Config** (`claude_desktop_config.json`), add:
+Easiest: run `powershell -ExecutionPolicy Bypass -File .\scripts\add-claude-mcp.ps1`, then fully quit and reopen Claude Desktop.
+
+Or add it by hand. Claude Desktop → **Settings → Developer → Edit Config** (`claude_desktop_config.json`), add:
 ```json
 {
   "mcpServers": {
