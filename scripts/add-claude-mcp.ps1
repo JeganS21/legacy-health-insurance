@@ -21,6 +21,11 @@ Get-ChildItem "$env:LOCALAPPDATA\Packages" -Directory -Filter "Claude_*" -ErrorA
     if (Test-Path $dir) { $files += (Join-Path $dir "claude_desktop_config.json") }
 }
 
+# Newer Claude Desktop builds keep settings in %LOCALAPPDATA%\Claude-Data\claude_<id>
+Get-ChildItem "$env:LOCALAPPDATA\Claude-Data" -Directory -Filter "claude_*" -ErrorAction SilentlyContinue | ForEach-Object {
+    $files += (Join-Path $_.FullName "claude_desktop_config.json")
+}
+
 $updated = 0
 foreach ($file in $files) {
     $dir = Split-Path $file
