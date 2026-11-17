@@ -37,3 +37,4 @@ credentials/
 *.json.key
 output/
 logs/
+diagnostics/
