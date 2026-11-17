@@ -25,6 +25,15 @@
     .muted { color: #7b8794; font-size: 12px; }
     .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
     pre { white-space: pre-wrap; font-size: 12px; margin: 0; }
+    .actions { display: flex; gap: 8px; }
+    button.extract { background: #12355b; color: #fff; padding: 5px 12px; margin-top: 6px; }
+    button:disabled { opacity: .55; cursor: default; }
+    .notice { padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+    .notice.ok { background: #d1fae5; color: #065f46; }
+    .notice.bad { background: #fee2e2; color: #991b1b; }
+    .pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 10px; font-size: 13px; }
+    .pager button { background: #f0f3f7; padding: 5px 10px; }
+    .pager select { padding: 4px; border-radius: 4px; border: 1px solid #cbd2d9; }
   </style>
 </head>
 <body>
@@ -33,22 +42,58 @@
     const { useState, useEffect } = React;
     const fmt = t => t ? t.replace("T", " ").substring(0, 19) : "-";
 
+    // Client-side pagination: keeps the current page across the 10-second auto-refresh,
+    // and moves back if rows disappear (e.g. after extraction).
+    function usePaged(rows, initialSize) {
+      const [page, setPage] = useState(0);
+      const [size, setSize] = useState(initialSize);
+      const pages = Math.max(1, Math.ceil(rows.length / size));
+      const current = Math.min(page, pages - 1);
+      return {
+        rows: rows.slice(current * size, current * size + size),
+        page: current, pages, size, total: rows.length,
+        setPage, setSize: n => { setSize(n); setPage(0); }
+      };
+    }
+
+    function Pager({ p, label }) {
+      if (p.total === 0) return null;
+      const from = p.page * p.size + 1, to = Math.min(p.total, (p.page + 1) * p.size);
+      return (
+        <div className="pager">
+          <span className="muted">{from}-{to} of {p.total} {label}</span>
+          <select value={p.size} onChange={e => p.setSize(Number(e.target.value))}>
+            {[5, 10, 20, 50].map(n => <option key={n} value={n}>{n} / page</option>)}
+          </select>
+          <button onClick={() => p.setPage(0)} disabled={p.page === 0}>«</button>
+          <button onClick={() => p.setPage(p.page - 1)} disabled={p.page === 0}>‹ Prev</button>
+          <span>Page {p.page + 1} of {p.pages}</span>
+          <button onClick={() => p.setPage(p.page + 1)} disabled={p.page >= p.pages - 1}>Next ›</button>
+          <button onClick={() => p.setPage(p.pages - 1)} disabled={p.page >= p.pages - 1}>»</button>
+        </div>
+      );
+    }
+
     function App() {
       const [docs, setDocs] = useState([]);
       const [logs, setLogs] = useState([]);
       const [runs, setRuns] = useState([]);
       const [workflow, setWorkflow] = useState(null);
       const [busy, setBusy] = useState(false);
+      const [claude, setClaude] = useState({ configured: false, model: "", problem: "" });
+      const [extracting, setExtracting] = useState(null);   // document id, "all", or null
+      const [notice, setNotice] = useState(null);
 
       const load = () => {
         fetch("/api/documents").then(r => r.json()).then(setDocs);
-        fetch("/api/logs?limit=100").then(r => r.json()).then(setLogs);
+        fetch("/api/logs?limit=500").then(r => r.json()).then(setLogs);
         fetch("/api/sync-runs?limit=10").then(r => r.json()).then(setRuns);
       };
 
       useEffect(() => {
         load();
         fetch("/api/workflow").then(r => r.json()).then(setWorkflow);
+        fetch("/api/extract/status").then(r => r.json()).then(setClaude).catch(() => {});
         const timer = setInterval(load, 10000);   // auto-refresh every 10 s
         return () => clearInterval(timer);
       }, []);
@@ -58,25 +103,77 @@
         fetch("/api/sync", { method: "POST" }).then(() => { setBusy(false); load(); });
       };
 
+      // Reads the JSON body, or the ProblemDetail error the server sends back.
+      const call = url => fetch(url, { method: "POST" }).then(async r => {
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
+        return body;
+      });
+
+      const extractOne = id => {
+        setExtracting(id); setNotice(null);
+        call("/api/documents/" + id + "/extract")
+          .then(r => setNotice({ ok: r.saved, text: "Document " + id + ": " + r.message }))
+          .catch(e => setNotice({ ok: false, text: "Document " + id + ": " + e.message }))
+          .finally(() => { setExtracting(null); load(); });
+      };
+
+      const extractAll = () => {
+        setExtracting("all"); setNotice(null);
+        call("/api/extract-pending")
+          .then(rs => {
+            const saved = rs.filter(r => r.saved).length;
+            const failed = rs.filter(r => !r.saved);
+            setNotice({ ok: failed.length === 0,
+                        text: rs.length === 0 ? "No pending documents."
+                            : saved + " of " + rs.length + " saved."
+                              + failed.map(r => " Doc " + r.documentId + ": " + r.message).join("") });
+          })
+          .catch(e => setNotice({ ok: false, text: e.message }))
+          .finally(() => { setExtracting(null); load(); });
+      };
+
+      const docPage = usePaged(docs, 10);
+      const logPage = usePaged(logs, 20);
+
+      const pendingCount = docs.filter(d => d.status === "PENDING_EXTRACTION").length;
+      const extractTitle = claude.configured ? "Extract with " + claude.model
+                                             : (claude.problem || "Claude is not available");
+
       return (
         <div>
           <header>
-            <h1>LegacyHealthInsurance · Drive → Claude (MCP) → Excel</h1>
-            <button onClick={syncNow} disabled={busy}>{busy ? "Syncing..." : "Sync Drive now"}</button>
+            <h1>LegacyHealthInsurance · Drive → Claude (MCP / API) → Excel</h1>
+            <div className="actions">
+              <button onClick={syncNow} disabled={busy}>{busy ? "Syncing..." : "Sync Drive now"}</button>
+              <button onClick={extractAll} title={extractTitle}
+                      disabled={!claude.configured || extracting !== null || pendingCount === 0}>
+                {extracting === "all" ? "Extracting..." : "Extract all pending (" + pendingCount + ")"}
+              </button>
+            </div>
           </header>
           <main>
+            {notice && <div className={"notice " + (notice.ok ? "ok" : "bad")}>{notice.text}</div>}
+            {!claude.configured && <div className="notice bad">Extract buttons are off: {claude.problem}</div>}
+            {claude.configured && <div className="muted">Extract buttons use {claude.model}.</div>}
             <section>
               <h2>Documents</h2>
               <table>
                 <thead><tr><th>ID</th><th>File</th><th>Status</th><th>Excel</th><th>Fetched</th><th>Extracted fields</th></tr></thead>
                 <tbody>
                   {docs.length === 0 && <tr><td colSpan="6" className="muted">No documents yet. Put files in the Drive folder and press "Sync Drive now".</td></tr>}
-                  {docs.map(d => (
+                  {docPage.rows.map(d => (
                     <tr key={d.documentId}>
                       <td>{d.documentId}</td>
                       <td>{d.fileName}<div className="muted">{d.textLength} chars</div></td>
                       <td><span className={"badge " + d.status}>{d.status}</span>
-                          {d.errorMessage && <div className="muted">{d.errorMessage}</div>}</td>
+                          {d.errorMessage && <div className="muted">{d.errorMessage}</div>}
+                          {d.status === "PENDING_EXTRACTION" && (
+                            <div><button className="extract" title={extractTitle}
+                                    disabled={!claude.configured || extracting !== null}
+                                    onClick={() => extractOne(d.documentId)}>
+                              {extracting === d.documentId ? "Extracting..." : "Extract"}
+                            </button></div>)}</td>
                       <td>{d.status === "EXTRACTED" ? (d.excelWritten ? "✅" : "⏳ retrying") : "-"}</td>
                       <td>{fmt(d.fetchedAt)}</td>
                       <td><pre>{d.extractedJson ? JSON.stringify(JSON.parse(d.extractedJson), null, 1) : "-"}</pre></td>
@@ -84,6 +181,7 @@
                   ))}
                 </tbody>
               </table>
+              <Pager p={docPage} label="documents" />
             </section>
 
             <div className="cols">
@@ -122,7 +220,7 @@
               <table>
                 <thead><tr><th>Time</th><th>Level</th><th>Source</th><th>Doc</th><th>Message</th></tr></thead>
                 <tbody>
-                  {logs.map(l => (
+                  {logPage.rows.map(l => (
                     <tr key={l.id}>
                       <td>{fmt(l.timestamp)}</td>
                       <td><span className={"badge " + l.level}>{l.level}</span></td>
@@ -131,6 +229,7 @@
                   ))}
                 </tbody>
               </table>
+              <Pager p={logPage} label="log lines" />
             </section>
           </main>
         </div>

@@ -77,6 +77,18 @@ Ask Claude:
 Open `output/insurance_details.xlsx` in Excel to see the rows (close it while Claude is saving - if it's open,
 the server retries the write on the next sync).
 
+### 6. Or press "Extract" on the dashboard (no chat needed)
+The dashboard has an **Extract** button on every pending document and an **Extract all pending** button in the header.
+The server asks Claude itself (`ClaudeExtractionService`) and saves the result through the same `ExtractionService`
+the MCP tool uses, so the validation, MySQL, Excel and logs are identical. Choose how it reaches Claude with
+`insurance.claude.mode` in `application.properties`:
+
+- **`cli` (default)** - runs Claude Code headless (`claude -p`) signed in with your Claude subscription. No API key,
+  no extra cost; usage counts against your plan limits. Install Claude Code, run `claude` once to sign in, then start
+  the server from a new terminal. Log source `CLAUDE_CLI`.
+- **`api`** - calls the Anthropic Messages API. Set `$env:ANTHROPIC_API_KEY = "sk-ant-..."` before starting the
+  server. Log source `CLAUDE_API`. Use this for production.
+
 ## Changing the fields
 Edit `workflow.yaml` (no restart needed). If you add/remove fields, rename or delete the old Excel file so it is
 recreated with the new columns.
